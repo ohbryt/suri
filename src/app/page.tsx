@@ -4,7 +4,7 @@ import { useState } from "react";
 import { ChatPanel } from "./components/ChatPanel";
 import { useChat } from "@/lib/hooks/useChat";
 
-type Provider = "claude" | "openai" | "zhipu";
+type Provider = "claude" | "zhipu";
 
 const PROVIDERS: Record<Provider, { name: string; icon: string; placeholder: string; link: string; linkText: string; model: string; price: string }> = {
   zhipu: {
@@ -15,15 +15,6 @@ const PROVIDERS: Record<Provider, { name: string; icon: string; placeholder: str
     linkText: "Z.AI API 키 발급",
     model: "glm-4.7",
     price: "$0.4 / $2",
-  },
-  openai: {
-    name: "GPT o3",
-    icon: "🟢",
-    placeholder: "sk-...",
-    link: "https://platform.openai.com/api-keys",
-    linkText: "OpenAI API 키 발급",
-    model: "o3",
-    price: "$10 / $40",
   },
   claude: {
     name: "Claude Sonnet",
