@@ -10,6 +10,11 @@ const TOOL_META: Record<string, { icon: string; label: string }> = {
   file_list: { icon: "📁", label: "파일 목록" },
   web_search: { icon: "🔍", label: "웹 검색" },
   web_search_deep: { icon: "🔬", label: "심층 검색" },
+  create_document: { icon: "📊", label: "문서 생성" },
+  deploy_preview: { icon: "🚀", label: "미리보기 배포" },
+  think: { icon: "🧠", label: "사고 중" },
+  web_crawl: { icon: "🌐", label: "페이지 읽기" },
+  bulk_file_write: { icon: "📦", label: "파일 일괄 생성" },
   message_user: { icon: "💬", label: "메시지" },
   idle: { icon: "✅", label: "완료" },
 };
@@ -83,8 +88,43 @@ export function ToolCallCard({
         </div>
       )}
 
+      {toolCall.name === "create_document" && (
+        <div className="px-3 py-2 space-y-1">
+          <div className="text-[11px] text-purple-400 font-mono">
+            📊 {String(toolCall.input.type || "").toUpperCase()} &middot; {String(toolCall.input.filename || "")}
+          </div>
+          <div className="text-[10px] text-zinc-500 truncate">{String(toolCall.input.title || "")}</div>
+        </div>
+      )}
+      {toolCall.name === "deploy_preview" && toolCall.input.path && (
+        <div className="px-3 py-1.5">
+          <span className="text-[11px] text-amber-400 font-mono">🚀 {String(toolCall.input.path)}</span>
+        </div>
+      )}
+
+      {/* Artifact download links in output */}
+      {result && result.output && /\/api\/artifacts\//.test(result.output) && !result.isError && (
+        <div className="px-3 py-2 border-t border-white/[0.04]">
+          {result.output.match(/\/api\/artifacts\/[^\s)]+/g)?.map((link, i) => (
+            <a
+              key={i}
+              href={link}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="flex items-center gap-2 px-2 py-1.5 rounded-md bg-primary/10 hover:bg-primary/20 transition-colors mb-1 last:mb-0"
+            >
+              <span className="text-[11px]">{link.endsWith(".zip") ? "📦" : link.endsWith(".pptx") ? "📊" : "🔗"}</span>
+              <span className="text-[11px] text-primary font-medium truncate">{link.split("/").pop()}</span>
+              <svg className="w-3 h-3 text-primary/60 ml-auto flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" />
+              </svg>
+            </a>
+          ))}
+        </div>
+      )}
+
       {/* Output */}
-      {result && result.output && (
+      {result && result.output && !/\/api\/artifacts\//.test(result.output) && (
         <div className="px-3 py-2 border-t border-white/[0.04] max-h-[200px] overflow-y-auto scrollbar-hide">
           <pre className={`text-[11px] font-mono whitespace-pre-wrap break-all leading-relaxed ${result.isError ? "text-red-300" : "text-zinc-400"}`}>
             {result.output.length > 2000 ? result.output.slice(0, 2000) + "\n...(truncated)" : result.output}

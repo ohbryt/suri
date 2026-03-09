@@ -32,6 +32,16 @@ export async function handleToolCall(
         return await webSearch(input);
       case "web_search_deep":
         return await webSearchDeep(input);
+      case "create_document":
+        return await createDocument(input);
+      case "deploy_preview":
+        return await deployPreview(input);
+      case "think":
+        return { output: `Reasoning logged: ${String(input.reasoning).slice(0, 200)}...` };
+      case "web_crawl":
+        return await webCrawl(input);
+      case "bulk_file_write":
+        return await bulkFileWrite(input);
       case "message_user":
         return { output: String(input.content || "") };
       case "idle":
@@ -320,6 +330,274 @@ async function webSearchDeep(input: Record<string, unknown>): Promise<{ output: 
   output += `\n---\n위 소스를 바탕으로 인라인 인용 [1][2] 형식으로 종합 답변을 작성하세요.`;
 
   return { output };
+}
+
+// ========== Web Crawl (Emergent-style) ==========
+
+async function webCrawl(input: Record<string, unknown>): Promise<{ output: string; isError?: boolean }> {
+  const url = String(input.url);
+  const extract = String(input.extract || "text");
+
+  try {
+    const content = await fetchPageContent(url, 10000);
+    if (!content) {
+      return { output: `Failed to fetch content from ${url}`, isError: true };
+    }
+
+    if (extract === "links") {
+      // Re-fetch to get links from HTML
+      const controller = new AbortController();
+      const timer = setTimeout(() => controller.abort(), 10000);
+      try {
+        const res = await fetch(url, {
+          signal: controller.signal,
+          headers: { "User-Agent": "Mozilla/5.0 (compatible; SuriBot/1.0)" },
+        });
+        const html = await res.text();
+        const linkRegex = /href="(https?:\/\/[^"]+)"/gi;
+        const links = new Set<string>();
+        let match;
+        while ((match = linkRegex.exec(html)) !== null && links.size < 50) {
+          links.add(match[1]);
+        }
+        return { output: `Links from ${url}:\n${[...links].join("\n")}` };
+      } catch {
+        return { output: `Failed to extract links from ${url}`, isError: true };
+      } finally {
+        clearTimeout(timer);
+      }
+    }
+
+    if (extract === "html") {
+      const controller = new AbortController();
+      const timer = setTimeout(() => controller.abort(), 10000);
+      try {
+        const res = await fetch(url, {
+          signal: controller.signal,
+          headers: { "User-Agent": "Mozilla/5.0 (compatible; SuriBot/1.0)" },
+        });
+        const html = await res.text();
+        return { output: html.slice(0, 10000) };
+      } catch {
+        return { output: `Failed to fetch HTML from ${url}`, isError: true };
+      } finally {
+        clearTimeout(timer);
+      }
+    }
+
+    // Default: text
+    return { output: `Content from ${url}:\n\n${content}` };
+  } catch (err: any) {
+    return { output: `Crawl error: ${err.message}`, isError: true };
+  }
+}
+
+// ========== Bulk File Write (Emergent-style) ==========
+
+async function bulkFileWrite(input: Record<string, unknown>): Promise<{ output: string; isError?: boolean }> {
+  const files = input.files as Array<{ path: string; content: string }>;
+  if (!Array.isArray(files) || files.length === 0) {
+    return { output: "No files provided", isError: true };
+  }
+
+  const results: string[] = [];
+  let successCount = 0;
+
+  for (const file of files) {
+    try {
+      const filePath = resolvePath(String(file.path));
+      await fs.mkdir(path.dirname(filePath), { recursive: true });
+      await fs.writeFile(filePath, String(file.content), "utf-8");
+      results.push(`✅ ${file.path}`);
+      successCount++;
+    } catch (err: any) {
+      results.push(`❌ ${file.path}: ${err.message}`);
+    }
+  }
+
+  return { output: `Wrote ${successCount}/${files.length} files:\n${results.join("\n")}` };
+}
+
+// ========== Document Generation ==========
+
+const ARTIFACTS_DIR = "/tmp/suri-artifacts";
+
+async function ensureArtifactsDir() {
+  await fs.mkdir(ARTIFACTS_DIR, { recursive: true });
+}
+
+async function createDocument(input: Record<string, unknown>): Promise<{ output: string; isError?: boolean }> {
+  await ensureArtifactsDir();
+  const docType = String(input.type);
+  const title = String(input.title);
+  const content = String(input.content);
+  const filename = String(input.filename);
+  const outputPath = path.join(ARTIFACTS_DIR, filename);
+
+  switch (docType) {
+    case "pptx": {
+      // Generate PPTX using python-pptx
+      let slides: Array<{ title?: string; body?: string; bullets?: string[]; notes?: string }>;
+      try {
+        slides = JSON.parse(content);
+      } catch {
+        return { output: "Invalid slides JSON. Expected array of {title, body?, bullets?, notes?}", isError: true };
+      }
+
+      // Build Python script for pptx generation
+      const pyScript = `
+import json, sys
+try:
+    from pptx import Presentation
+    from pptx.util import Inches, Pt
+    from pptx.dml.color import RGBColor
+    from pptx.enum.text import PP_ALIGN
+except ImportError:
+    import subprocess
+    subprocess.check_call([sys.executable, "-m", "pip", "install", "python-pptx", "-q"])
+    from pptx import Presentation
+    from pptx.util import Inches, Pt
+    from pptx.dml.color import RGBColor
+    from pptx.enum.text import PP_ALIGN
+
+prs = Presentation()
+prs.slide_width = Inches(16)
+prs.slide_height = Inches(9)
+
+slides = json.loads('''${JSON.stringify(slides).replace(/'/g, "\\'")}''')
+
+for i, s in enumerate(slides):
+    if i == 0:
+        layout = prs.slide_layouts[0]  # Title slide
+    else:
+        layout = prs.slide_layouts[1]  # Title + Content
+
+    slide = prs.slides.add_slide(layout)
+
+    if slide.shapes.title and s.get("title"):
+        slide.shapes.title.text = s["title"]
+
+    if len(slide.placeholders) > 1:
+        body = slide.placeholders[1]
+        tf = body.text_frame
+        tf.clear()
+        if s.get("bullets"):
+            for j, bullet in enumerate(s["bullets"]):
+                if j == 0:
+                    tf.text = bullet
+                else:
+                    p = tf.add_paragraph()
+                    p.text = bullet
+        elif s.get("body"):
+            tf.text = s["body"]
+
+    if s.get("notes"):
+        slide.notes_slide.notes_text_frame.text = s["notes"]
+
+prs.save("${outputPath.replace(/\\/g, "/")}")
+print("OK")
+`;
+      try {
+        const pyPath = path.join(ARTIFACTS_DIR, "_gen_pptx.py");
+        await fs.writeFile(pyPath, pyScript);
+        const { stdout, stderr } = await execAsync(`python3 "${pyPath}"`, { timeout: 30_000 });
+        await fs.unlink(pyPath).catch(() => {});
+        if (stdout.includes("OK")) {
+          return { output: `📊 Presentation created: ${filename}\n📥 Download: /api/artifacts/${filename}\n\nSlides: ${slides.length}장` };
+        }
+        return { output: `PPTX generation error: ${stderr || stdout}`, isError: true };
+      } catch (err: any) {
+        return { output: `PPTX generation failed: ${err.message}`, isError: true };
+      }
+    }
+
+    case "html": {
+      // Wrap content in a nice HTML template if it's not already a full HTML doc
+      let htmlContent = content;
+      if (!content.trim().startsWith("<!DOCTYPE") && !content.trim().startsWith("<html")) {
+        htmlContent = `<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>${title}</title>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; line-height: 1.6; color: #1a1a1a; }
+  </style>
+</head>
+<body>
+${content}
+</body>
+</html>`;
+      }
+      await fs.writeFile(outputPath, htmlContent, "utf-8");
+      return { output: `🌐 HTML document created: ${filename}\n📥 Download: /api/artifacts/${filename}\n🔗 Preview: /api/artifacts/${filename}` };
+    }
+
+    case "markdown": {
+      await fs.writeFile(outputPath, `# ${title}\n\n${content}`, "utf-8");
+      return { output: `📝 Markdown document created: ${filename}\n📥 Download: /api/artifacts/${filename}` };
+    }
+
+    default:
+      return { output: `Unsupported document type: ${docType}`, isError: true };
+  }
+}
+
+// ========== Deploy Preview ==========
+
+async function deployPreview(input: Record<string, unknown>): Promise<{ output: string; isError?: boolean }> {
+  await ensureArtifactsDir();
+  const projectPath = resolvePath(String(input.path));
+  const entryFile = String(input.entry_file || "index.html");
+
+  // Check if directory exists
+  try {
+    const stat = await fs.stat(projectPath);
+    if (!stat.isDirectory()) {
+      return { output: `Not a directory: ${projectPath}`, isError: true };
+    }
+  } catch {
+    return { output: `Directory not found: ${projectPath}`, isError: true };
+  }
+
+  // Check for entry file
+  const entryPath = path.join(projectPath, entryFile);
+  try {
+    await fs.stat(entryPath);
+  } catch {
+    // List available files for hint
+    const files = await fs.readdir(projectPath);
+    return {
+      output: `Entry file "${entryFile}" not found in ${projectPath}.\nAvailable files: ${files.join(", ")}`,
+      isError: true,
+    };
+  }
+
+  // Create zip of the project
+  const zipName = `preview-${Date.now()}.zip`;
+  const zipPath = path.join(ARTIFACTS_DIR, zipName);
+
+  try {
+    await execAsync(`cd "${projectPath}" && zip -r "${zipPath}" . -x "node_modules/*" ".git/*"`, {
+      timeout: 30_000,
+    });
+  } catch (err: any) {
+    // Fallback: just copy the entry file
+    const destPath = path.join(ARTIFACTS_DIR, `preview-${Date.now()}-${entryFile}`);
+    await fs.copyFile(entryPath, destPath);
+    const name = path.basename(destPath);
+    return { output: `🌐 Preview ready: /api/artifacts/${name}\n(zip failed, serving entry file only)` };
+  }
+
+  // Also copy entry file directly for iframe preview
+  const previewName = `preview-${Date.now()}-${entryFile}`;
+  await fs.copyFile(entryPath, path.join(ARTIFACTS_DIR, previewName));
+
+  return {
+    output: `🚀 Deploy preview ready!\n\n🔗 Preview: /api/artifacts/${previewName}\n📦 Download ZIP: /api/artifacts/${zipName}\n\nFiles packaged from: ${projectPath}`,
+  };
 }
 
 function resolvePath(p: string): string {

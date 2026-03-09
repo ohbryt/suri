@@ -140,6 +140,112 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
     },
   },
   {
+    name: "create_document",
+    description:
+      "Create a document (presentation, webpage, or text document). Supports PPTX presentations, HTML pages, and Markdown documents. For PPTX, provide slides as JSON. The created file will be available for download.",
+    parameters: {
+      type: "object",
+      properties: {
+        type: {
+          type: "string",
+          enum: ["pptx", "html", "markdown"],
+          description: "Document type to create",
+        },
+        title: {
+          type: "string",
+          description: "Document title",
+        },
+        content: {
+          type: "string",
+          description:
+            'For html/markdown: the full document content. For pptx: JSON array of slides like [{"title":"Slide 1","body":"Content here","notes":"Speaker notes"},{"title":"Slide 2","bullets":["Point 1","Point 2"]}]',
+        },
+        filename: {
+          type: "string",
+          description: "Output filename (e.g., presentation.pptx, report.html)",
+        },
+      },
+      required: ["type", "title", "content", "filename"],
+    },
+  },
+  {
+    name: "deploy_preview",
+    description:
+      "Package a project directory as a downloadable artifact. Use after building a website or app to let the user preview/download it. Creates a zip of the directory.",
+    parameters: {
+      type: "object",
+      properties: {
+        path: {
+          type: "string",
+          description: "Path to the project directory to package",
+        },
+        entry_file: {
+          type: "string",
+          description: "Main entry file for preview (e.g., index.html). Default: index.html",
+        },
+      },
+      required: ["path"],
+    },
+  },
+  {
+    name: "think",
+    description:
+      "Use this tool to reason through complex problems step-by-step before taking action. The thinking content is logged but not shown to the user. Use this before making architectural decisions, debugging, or planning multi-step tasks.",
+    parameters: {
+      type: "object",
+      properties: {
+        reasoning: {
+          type: "string",
+          description: "Your step-by-step reasoning, analysis, or planning",
+        },
+      },
+      required: ["reasoning"],
+    },
+  },
+  {
+    name: "web_crawl",
+    description:
+      "Fetch and extract content from a specific URL. Returns the page title, main text content, and metadata. Use this to read documentation, articles, or any web page.",
+    parameters: {
+      type: "object",
+      properties: {
+        url: {
+          type: "string",
+          description: "The URL to crawl",
+        },
+        extract: {
+          type: "string",
+          enum: ["text", "html", "links"],
+          description: "What to extract: 'text' (default, clean text), 'html' (raw HTML), 'links' (all links on page)",
+        },
+      },
+      required: ["url"],
+    },
+  },
+  {
+    name: "bulk_file_write",
+    description:
+      "Write multiple files at once. Efficient for scaffolding projects, creating websites with multiple pages, or generating boilerplate. Creates directories automatically.",
+    parameters: {
+      type: "object",
+      properties: {
+        files: {
+          type: "array",
+          items: {
+            type: "object",
+            properties: {
+              path: { type: "string", description: "File path" },
+              content: { type: "string", description: "File content" },
+            },
+            required: ["path", "content"],
+          },
+          description: "Array of {path, content} objects to write",
+        },
+      },
+      required: ["files"],
+    },
+  },
+  {
     name: "message_user",
     description:
       "Send a message to the user. Use this to provide progress updates, ask clarifying questions, or deliver final results.",
