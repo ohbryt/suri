@@ -23,18 +23,25 @@ For complex tasks, ALWAYS use the think tool first to:
 - Consider edge cases and potential issues
 - Plan your approach before writing any code
 
-## WEBSITE BUILD MODE (Emergent-style)
+## WEBSITE BUILD MODE (Same.dev-style)
 When asked to build a website, landing page, or web app:
 1. Use think to plan the architecture and design
-2. Use bulk_file_write to scaffold all files at once (HTML, CSS, JS)
-3. Design BEAUTIFUL, modern UIs by default:
-   - Use Tailwind CSS via CDN
-   - Dark mode support
-   - Smooth animations and transitions
+2. Use create_project to scaffold from a template (html-tailwind, react-vite, nextjs)
+3. Use bulk_file_write or file_write to build all pages and components
+4. Design BEAUTIFUL, modern UIs by default:
+   - Use Tailwind CSS, dark mode, smooth animations
    - Mobile-first responsive design
    - Professional typography and spacing
-4. Use deploy_preview to package it for the user
-5. Share the preview link and download link
+5. Use deploy_preview to package it for the user
+6. Share the preview link and download link
+
+## WEBSITE CLONE MODE
+When the user sends a URL and asks to clone/copy it:
+1. Use web_crawl to fetch the page content and analyze the design
+2. Use think to plan the structure: layout, colors, fonts, sections
+3. Use create_project with html-tailwind template
+4. Rebuild the UI pixel-perfect using Tailwind CSS
+5. Use deploy_preview to deliver the result
 
 ## DOCUMENT MODE
 When asked to create a presentation (PPT), report, or document:
@@ -61,12 +68,19 @@ For reading a specific page, use web_crawl instead.
 7. Respond in Korean (한국어) by default unless the user writes in English
 8. Write clean, production-quality code with modern best practices`;
 
-export type Provider = "claude" | "openai";
+export type Provider = "claude" | "openai" | "zhipu";
 
 // ==================== Pricing ====================
 const PRICING: Record<Provider, { input: number; output: number }> = {
-  claude: { input: 3 / 1_000_000, output: 15 / 1_000_000 },   // Sonnet 4
-  openai: { input: 10 / 1_000_000, output: 40 / 1_000_000 }, // o3
+  claude: { input: 3 / 1_000_000, output: 15 / 1_000_000 },     // Sonnet 4
+  openai: { input: 10 / 1_000_000, output: 40 / 1_000_000 },    // o3
+  zhipu:  { input: 0.38 / 1_000_000, output: 1.98 / 1_000_000 }, // GLM-4.7
+};
+
+// ==================== OpenAI-compatible config ====================
+const OPENAI_COMPAT: Record<string, { endpoint: string; model: string }> = {
+  openai: { endpoint: "https://api.openai.com/v1/chat/completions", model: "o3" },
+  zhipu:  { endpoint: "https://api.z.ai/api/paas/v4/chat/completions", model: "glm-4.7" },
 };
 
 // ==================== Main Agent Loop ====================
@@ -81,8 +95,8 @@ export async function* runAgent(
   let totalOutputTokens = 0;
   const pricing = PRICING[provider];
 
-  if (provider === "openai") {
-    yield* runOpenAI(userMessages, apiKey, pricing);
+  if (provider === "openai" || provider === "zhipu") {
+    yield* runOpenAICompat(userMessages, apiKey, pricing, OPENAI_COMPAT[provider]);
     return;
   }
 
@@ -187,10 +201,11 @@ export async function* runAgent(
 }
 
 // ==================== OpenAI Path ====================
-async function* runOpenAI(
+async function* runOpenAICompat(
   userMessages: ChatMessage[],
   apiKey: string,
-  pricing: { input: number; output: number }
+  pricing: { input: number; output: number },
+  config: { endpoint: string; model: string }
 ): AsyncGenerator<AgentEvent> {
   const MAX_ITERATIONS = 20;
   let iteration = 0;
@@ -218,14 +233,14 @@ async function* runOpenAI(
 
     let response: any;
     try {
-      const res = await fetch("https://api.openai.com/v1/chat/completions", {
+      const res = await fetch(config.endpoint, {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
           Authorization: `Bearer ${apiKey}`,
         },
         body: JSON.stringify({
-          model: "o3",
+          model: config.model,
           max_tokens: 4096,
           messages: conversation,
           tools,

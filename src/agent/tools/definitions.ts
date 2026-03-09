@@ -188,6 +188,26 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
     },
   },
   {
+    name: "create_project",
+    description:
+      "Scaffold a new web project from a template. Creates a ready-to-run project with the chosen framework. Use this when asked to build a website, web app, or landing page. After scaffolding, use shell_execute to install deps and start dev server.",
+    parameters: {
+      type: "object",
+      properties: {
+        name: {
+          type: "string",
+          description: "Project name (lowercase, hyphens only, e.g. 'my-portfolio')",
+        },
+        framework: {
+          type: "string",
+          enum: ["html-tailwind", "react-vite", "nextjs"],
+          description: "Framework template: 'html-tailwind' (static HTML+Tailwind CDN), 'react-vite' (React+Vite+Tailwind), 'nextjs' (Next.js+Tailwind)",
+        },
+      },
+      required: ["name", "framework"],
+    },
+  },
+  {
     name: "think",
     description:
       "Use this tool to reason through complex problems step-by-step before taking action. The thinking content is logged but not shown to the user. Use this before making architectural decisions, debugging, or planning multi-step tasks.",

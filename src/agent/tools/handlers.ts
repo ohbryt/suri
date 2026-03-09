@@ -36,6 +36,8 @@ export async function handleToolCall(
         return await createDocument(input);
       case "deploy_preview":
         return await deployPreview(input);
+      case "create_project":
+        return await createProject(input);
       case "think":
         return { output: `Reasoning logged: ${String(input.reasoning).slice(0, 200)}...` };
       case "web_crawl":
@@ -330,6 +332,90 @@ async function webSearchDeep(input: Record<string, unknown>): Promise<{ output: 
   output += `\n---\n위 소스를 바탕으로 인라인 인용 [1][2] 형식으로 종합 답변을 작성하세요.`;
 
   return { output };
+}
+
+// ========== Project Scaffolding (Same.dev-style) ==========
+
+async function createProject(input: Record<string, unknown>): Promise<{ output: string; isError?: boolean }> {
+  const name = String(input.name).replace(/[^a-z0-9-]/g, "-");
+  const framework = String(input.framework);
+  const projectDir = path.join(WORKSPACE, name);
+
+  await fs.mkdir(projectDir, { recursive: true });
+
+  switch (framework) {
+    case "html-tailwind": {
+      const files: Record<string, string> = {
+        "index.html": `<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>${name}</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script>tailwindcss.config={theme:{extend:{colors:{primary:'#6366f1'}}}}</script>
+</head>
+<body class="min-h-screen bg-gray-950 text-white">
+  <main class="max-w-4xl mx-auto px-4 py-16">
+    <h1 class="text-5xl font-bold mb-4">${name}</h1>
+    <p class="text-gray-400 text-lg">Edit index.html to get started.</p>
+  </main>
+</body>
+</html>`,
+        "style.css": `/* Custom styles */\n`,
+      };
+      for (const [f, c] of Object.entries(files)) {
+        await fs.writeFile(path.join(projectDir, f), c);
+      }
+      return { output: `🏗️ Project "${name}" created (HTML + Tailwind CDN)\n📁 ${projectDir}\nFiles: ${Object.keys(files).join(", ")}` };
+    }
+
+    case "react-vite": {
+      try {
+        await execAsync(`cd "${WORKSPACE}" && npm create vite@latest ${name} -- --template react-ts 2>&1`, { timeout: 60_000 });
+        return { output: `🏗️ Project "${name}" created (React + Vite + TypeScript)\n📁 ${projectDir}\nRun: cd /workspace/${name} && npm install && npm run dev` };
+      } catch (err: any) {
+        // Fallback: create minimal react project manually
+        const files: Record<string, string> = {
+          "index.html": `<!DOCTYPE html>\n<html lang="ko">\n<head>\n  <meta charset="UTF-8">\n  <meta name="viewport" content="width=device-width, initial-scale=1.0">\n  <title>${name}</title>\n</head>\n<body>\n  <div id="root"></div>\n  <script type="module" src="/src/main.tsx"></script>\n</body>\n</html>`,
+          "src/main.tsx": `import React from 'react';\nimport ReactDOM from 'react-dom/client';\nimport App from './App';\nimport './index.css';\n\nReactDOM.createRoot(document.getElementById('root')!).render(<React.StrictMode><App /></React.StrictMode>);`,
+          "src/App.tsx": `export default function App() {\n  return <div className="min-h-screen bg-gray-950 text-white flex items-center justify-center">\n    <h1 className="text-4xl font-bold">${name}</h1>\n  </div>;\n}`,
+          "src/index.css": `@tailwind base;\n@tailwind components;\n@tailwind utilities;`,
+          "package.json": `{"name":"${name}","private":true,"type":"module","scripts":{"dev":"vite","build":"vite build"},"dependencies":{"react":"^19.0.0","react-dom":"^19.0.0"},"devDependencies":{"@types/react":"^19.0.0","@vitejs/plugin-react":"^4.0.0","tailwindcss":"^4.0.0","vite":"^6.0.0","typescript":"^5.0.0"}}`,
+        };
+        for (const [f, c] of Object.entries(files)) {
+          const fp = path.join(projectDir, f);
+          await fs.mkdir(path.dirname(fp), { recursive: true });
+          await fs.writeFile(fp, c);
+        }
+        return { output: `🏗️ Project "${name}" created (React + Vite, manual scaffold)\n📁 ${projectDir}\nRun: cd /workspace/${name} && npm install && npm run dev` };
+      }
+    }
+
+    case "nextjs": {
+      try {
+        await execAsync(`cd "${WORKSPACE}" && npx create-next-app@latest ${name} --ts --tailwind --app --no-eslint --no-src-dir --import-alias "@/*" --use-npm 2>&1`, { timeout: 120_000 });
+        return { output: `🏗️ Project "${name}" created (Next.js + Tailwind + TypeScript)\n📁 ${projectDir}\nRun: cd /workspace/${name} && npm run dev` };
+      } catch {
+        const files: Record<string, string> = {
+          "app/page.tsx": `export default function Home() {\n  return <main className="min-h-screen bg-gray-950 text-white flex items-center justify-center">\n    <h1 className="text-5xl font-bold">${name}</h1>\n  </main>;\n}`,
+          "app/layout.tsx": `import './globals.css';\nexport const metadata = { title: '${name}' };\nexport default function RootLayout({ children }: { children: React.ReactNode }) {\n  return <html lang="ko"><body>{children}</body></html>;\n}`,
+          "app/globals.css": `@tailwind base;\n@tailwind components;\n@tailwind utilities;`,
+          "package.json": `{"name":"${name}","private":true,"scripts":{"dev":"next dev","build":"next build","start":"next start"},"dependencies":{"next":"^16.0.0","react":"^19.0.0","react-dom":"^19.0.0"},"devDependencies":{"@types/react":"^19.0.0","typescript":"^5.0.0","tailwindcss":"^4.0.0"}}`,
+          "tsconfig.json": `{"compilerOptions":{"target":"ES2017","lib":["dom","dom.iterable","esnext"],"jsx":"preserve","module":"esnext","moduleResolution":"bundler","paths":{"@/*":["./*"]},"strict":true,"esModuleInterop":true,"skipLibCheck":true},"include":["**/*.ts","**/*.tsx"],"exclude":["node_modules"]}`,
+        };
+        for (const [f, c] of Object.entries(files)) {
+          const fp = path.join(projectDir, f);
+          await fs.mkdir(path.dirname(fp), { recursive: true });
+          await fs.writeFile(fp, c);
+        }
+        return { output: `🏗️ Project "${name}" created (Next.js, manual scaffold)\n📁 ${projectDir}\nRun: cd /workspace/${name} && npm install && npm run dev` };
+      }
+    }
+
+    default:
+      return { output: `Unknown framework: ${framework}. Use: html-tailwind, react-vite, nextjs`, isError: true };
+  }
 }
 
 // ========== Web Crawl (Emergent-style) ==========

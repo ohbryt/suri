@@ -12,6 +12,7 @@ const TOOL_META: Record<string, { icon: string; label: string }> = {
   web_search_deep: { icon: "🔬", label: "심층 검색" },
   create_document: { icon: "📊", label: "문서 생성" },
   deploy_preview: { icon: "🚀", label: "미리보기 배포" },
+  create_project: { icon: "🏗️", label: "프로젝트 생성" },
   think: { icon: "🧠", label: "사고 중" },
   web_crawl: { icon: "🌐", label: "페이지 읽기" },
   bulk_file_write: { icon: "📦", label: "파일 일괄 생성" },

@@ -4,9 +4,18 @@ import { useState } from "react";
 import { ChatPanel } from "./components/ChatPanel";
 import { useChat } from "@/lib/hooks/useChat";
 
-type Provider = "claude" | "openai";
+type Provider = "claude" | "openai" | "zhipu";
 
 const PROVIDERS: Record<Provider, { name: string; icon: string; placeholder: string; link: string; linkText: string; model: string; price: string }> = {
+  zhipu: {
+    name: "GLM-4.7",
+    icon: "🔵",
+    placeholder: "your-zhipu-api-key",
+    link: "https://z.ai",
+    linkText: "Z.AI API 키 발급",
+    model: "glm-4.7",
+    price: "$0.4 / $2",
+  },
   openai: {
     name: "GPT o3",
     icon: "🟢",
@@ -29,7 +38,7 @@ const PROVIDERS: Record<Provider, { name: string; icon: string; placeholder: str
 
 export default function Home() {
   const [apiKey, setApiKey] = useState("");
-  const [provider, setProvider] = useState<Provider>("openai");
+  const [provider, setProvider] = useState<Provider>("zhipu");
   const [keySet, setKeySet] = useState(false);
   const { messages, isLoading, totalCost, activeTools, sendMessage, cancel, clear } = useChat();
 
