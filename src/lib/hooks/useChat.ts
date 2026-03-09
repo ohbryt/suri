@@ -10,7 +10,7 @@ export function useChat() {
   const [activeTools, setActiveTools] = useState<string[]>([]);
   const abortRef = useRef<AbortController | null>(null);
 
-  const sendMessage = useCallback(async (content: string, apiKey: string) => {
+  const sendMessage = useCallback(async (content: string, apiKey: string, provider: string = "claude") => {
     if (!content.trim() || !apiKey) return;
     setIsLoading(true);
     abortRef.current = new AbortController();
@@ -40,7 +40,7 @@ export function useChat() {
       const res = await fetch("/api/chat", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ messages: allMessages, apiKey }),
+        body: JSON.stringify({ messages: allMessages, apiKey, provider }),
         signal: abortRef.current.signal,
       });
 

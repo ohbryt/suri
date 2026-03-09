@@ -1,11 +1,13 @@
 import { NextRequest } from "next/server";
 import { runAgent } from "@/agent/orchestrator";
+import type { Provider } from "@/agent/orchestrator";
 import type { ChatMessage } from "@/lib/types";
 
 export async function POST(req: NextRequest) {
-  const { messages, apiKey } = (await req.json()) as {
+  const { messages, apiKey, provider = "claude" } = (await req.json()) as {
     messages: ChatMessage[];
     apiKey: string;
+    provider?: Provider;
   };
 
   if (!apiKey) {
@@ -25,7 +27,7 @@ export async function POST(req: NextRequest) {
       }
 
       try {
-        for await (const event of runAgent(messages, apiKey)) {
+        for await (const event of runAgent(messages, apiKey, provider)) {
           send(event.type, event);
         }
       } catch (err: any) {

@@ -61,29 +61,33 @@ For reading a specific page, use web_crawl instead.
 7. Respond in Korean (한국어) by default unless the user writes in English
 8. Write clean, production-quality code with modern best practices`;
 
-interface ConversationMessage {
-  role: "user" | "assistant" | "tool";
-  content?: string | null;
-  tool_calls?: Array<{
-    id: string;
-    type: "function";
-    function: { name: string; arguments: string };
-  }>;
-  tool_call_id?: string;
-  name?: string;
-}
+export type Provider = "claude" | "openai";
 
+// ==================== Pricing ====================
+const PRICING: Record<Provider, { input: number; output: number }> = {
+  claude: { input: 3 / 1_000_000, output: 15 / 1_000_000 },   // Sonnet 4
+  openai: { input: 10 / 1_000_000, output: 40 / 1_000_000 }, // o3
+};
+
+// ==================== Main Agent Loop ====================
 export async function* runAgent(
   userMessages: ChatMessage[],
-  apiKey: string
+  apiKey: string,
+  provider: Provider = "claude"
 ): AsyncGenerator<AgentEvent> {
   const MAX_ITERATIONS = 20;
   let iteration = 0;
   let totalInputTokens = 0;
   let totalOutputTokens = 0;
+  const pricing = PRICING[provider];
 
-  // Build conversation
-  const conversation: ConversationMessage[] = userMessages.map((m) => ({
+  if (provider === "openai") {
+    yield* runOpenAI(userMessages, apiKey, pricing);
+    return;
+  }
+
+  // ==================== Claude Path ====================
+  const conversation: any[] = userMessages.map((m) => ({
     role: m.role as "user" | "assistant",
     content: m.content,
   }));
@@ -91,7 +95,6 @@ export async function* runAgent(
   while (iteration < MAX_ITERATIONS) {
     iteration++;
 
-    // Call Claude API
     const tools = TOOL_DEFINITIONS.map((t) => ({
       name: t.name,
       description: t.description,
@@ -121,29 +124,19 @@ export async function* runAgent(
         yield { type: "error", code: "api_error", message: `Claude API error: ${res.status} ${errText}` };
         return;
       }
-
       response = await res.json();
     } catch (err: any) {
       yield { type: "error", code: "network_error", message: err.message };
       return;
     }
 
-    // Track tokens
     if (response.usage) {
       totalInputTokens += response.usage.input_tokens;
       totalOutputTokens += response.usage.output_tokens;
-      const cost =
-        (response.usage.input_tokens * 3) / 1_000_000 +
-        (response.usage.output_tokens * 15) / 1_000_000;
-      yield {
-        type: "token_usage",
-        input: response.usage.input_tokens,
-        output: response.usage.output_tokens,
-        cost,
-      };
+      const cost = response.usage.input_tokens * pricing.input + response.usage.output_tokens * pricing.output;
+      yield { type: "token_usage", input: response.usage.input_tokens, output: response.usage.output_tokens, cost };
     }
 
-    // Process response content blocks
     const contentBlocks = response.content || [];
     let hasToolUse = false;
     const assistantContent: any[] = [];
@@ -159,73 +152,154 @@ export async function* runAgent(
       }
     }
 
-    // Add assistant message to conversation
-    conversation.push({ role: "assistant", content: assistantContent as any });
+    conversation.push({ role: "assistant", content: assistantContent });
 
-    // If no tool use, we're done
-    if (response.stop_reason === "end_turn" || !hasToolUse) {
-      break;
-    }
+    if (response.stop_reason === "end_turn" || !hasToolUse) break;
 
-    // Execute tool calls
     for (const block of contentBlocks) {
       if (block.type !== "tool_use") continue;
-
-      const toolName = block.name;
-      const toolInput = block.input;
+      const { name: toolName, input: toolInput, id: toolId } = block;
 
       yield { type: "tool_start", tool: toolName, input: toolInput };
 
-      // Check for idle
       if (toolName === "idle") {
-        yield {
-          type: "tool_result",
-          tool: toolName,
-          output: `Task complete: ${toolInput.reason}`,
-        };
-        // Add tool result to conversation
-        conversation.push({
-          role: "tool" as any,
-          tool_call_id: block.id,
-          content: `Task complete: ${toolInput.reason}`,
-        } as any);
-
-        const totalCost =
-          (totalInputTokens * 3) / 1_000_000 +
-          (totalOutputTokens * 15) / 1_000_000;
+        yield { type: "tool_result", tool: toolName, output: `Task complete: ${toolInput.reason}` };
+        conversation.push({ role: "user", content: [{ type: "tool_result", tool_use_id: toolId, content: `Task complete: ${toolInput.reason}` }] });
+        const totalCost = totalInputTokens * pricing.input + totalOutputTokens * pricing.output;
         yield { type: "done", totalCost };
         return;
       }
 
-      // Execute tool
       const startTime = Date.now();
       const result = await handleToolCall(toolName, toolInput);
       const durationMs = Date.now() - startTime;
+      yield { type: "tool_result", tool: toolName, output: result.output, isError: result.isError, durationMs };
 
-      yield {
-        type: "tool_result",
-        tool: toolName,
-        output: result.output,
-        isError: result.isError,
-        durationMs,
-      };
-
-      // Add tool result to conversation (Claude Messages API format)
       conversation.push({
         role: "user",
-        content: [
-          {
-            type: "tool_result",
-            tool_use_id: block.id,
-            content: result.output.slice(0, 10000), // Limit output size
-          },
-        ],
-      } as any);
+        content: [{ type: "tool_result", tool_use_id: toolId, content: result.output.slice(0, 10000) }],
+      });
     }
   }
 
-  const totalCost =
-    (totalInputTokens * 3) / 1_000_000 +
-    (totalOutputTokens * 15) / 1_000_000;
+  const totalCost = totalInputTokens * pricing.input + totalOutputTokens * pricing.output;
+  yield { type: "done", totalCost };
+}
+
+// ==================== OpenAI Path ====================
+async function* runOpenAI(
+  userMessages: ChatMessage[],
+  apiKey: string,
+  pricing: { input: number; output: number }
+): AsyncGenerator<AgentEvent> {
+  const MAX_ITERATIONS = 20;
+  let iteration = 0;
+  let totalInputTokens = 0;
+  let totalOutputTokens = 0;
+
+  // Convert tool definitions to OpenAI format
+  const tools = TOOL_DEFINITIONS.map((t) => ({
+    type: "function" as const,
+    function: {
+      name: t.name,
+      description: t.description,
+      parameters: t.parameters,
+    },
+  }));
+
+  // Build OpenAI conversation
+  const conversation: any[] = [
+    { role: "system", content: SYSTEM_PROMPT },
+    ...userMessages.map((m) => ({ role: m.role, content: m.content })),
+  ];
+
+  while (iteration < MAX_ITERATIONS) {
+    iteration++;
+
+    let response: any;
+    try {
+      const res = await fetch("https://api.openai.com/v1/chat/completions", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${apiKey}`,
+        },
+        body: JSON.stringify({
+          model: "o3",
+          max_tokens: 4096,
+          messages: conversation,
+          tools,
+          tool_choice: "auto",
+        }),
+      });
+
+      if (!res.ok) {
+        const errText = await res.text();
+        yield { type: "error", code: "api_error", message: `OpenAI API error: ${res.status} ${errText}` };
+        return;
+      }
+      response = await res.json();
+    } catch (err: any) {
+      yield { type: "error", code: "network_error", message: err.message };
+      return;
+    }
+
+    // Track tokens
+    if (response.usage) {
+      totalInputTokens += response.usage.prompt_tokens;
+      totalOutputTokens += response.usage.completion_tokens;
+      const cost = response.usage.prompt_tokens * pricing.input + response.usage.completion_tokens * pricing.output;
+      yield { type: "token_usage", input: response.usage.prompt_tokens, output: response.usage.completion_tokens, cost };
+    }
+
+    const choice = response.choices?.[0];
+    if (!choice) break;
+
+    const msg = choice.message;
+
+    // Emit text content
+    if (msg.content) {
+      yield { type: "message_delta", content: msg.content };
+    }
+
+    // Add assistant message to conversation
+    conversation.push(msg);
+
+    // Check for tool calls
+    if (!msg.tool_calls || msg.tool_calls.length === 0) break;
+
+    // Execute each tool call
+    for (const tc of msg.tool_calls) {
+      const toolName = tc.function.name;
+      let toolInput: Record<string, any> = {};
+      try {
+        toolInput = JSON.parse(tc.function.arguments);
+      } catch {}
+
+      yield { type: "tool_start", tool: toolName, input: toolInput };
+
+      if (toolName === "idle") {
+        yield { type: "tool_result", tool: toolName, output: `Task complete: ${toolInput.reason}` };
+        conversation.push({ role: "tool", tool_call_id: tc.id, content: `Task complete: ${toolInput.reason}` });
+        const totalCost = totalInputTokens * pricing.input + totalOutputTokens * pricing.output;
+        yield { type: "done", totalCost };
+        return;
+      }
+
+      const startTime = Date.now();
+      const result = await handleToolCall(toolName, toolInput);
+      const durationMs = Date.now() - startTime;
+      yield { type: "tool_result", tool: toolName, output: result.output, isError: result.isError, durationMs };
+
+      // OpenAI tool result format
+      conversation.push({
+        role: "tool",
+        tool_call_id: tc.id,
+        content: result.output.slice(0, 10000),
+      });
+    }
+  }
+
+  const totalCost = totalInputTokens * pricing.input + totalOutputTokens * pricing.output;
   yield { type: "done", totalCost };
 }
